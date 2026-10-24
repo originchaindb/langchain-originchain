@@ -1,0 +1,18 @@
+{
+  "canonical_source_commit": "5a4da3abdd051c584f4d3848155b06cf8aaf306b",
+  "source_path": "sdk/langchain-originchain",
+  "runtime_and_tests_unchanged": true,
+  "license": "Proprietary",
+  "exported_source_sha256": {
+    "src/langchain_originchain/__init__.py": "ffad6b78d2142e3230697052ccd68c5f2151655448b1c3c561f11620bc42c991",
+    "src/langchain_originchain/_support.py": "aeda76d544a45cd1f28775b967cc9cf07e92c36a3786fc808191e576fbea1a3c",
+    "src/langchain_originchain/vectorstore.py": "96b124e8a948ebc44a164c9ccfde5e00523a44cfae1a0f44858dcf4ced96f61d",
+    "tests/conftest.py": "522ed37bfd2d21775b225f68aca887cc03fdba01026f0ba31b6cab066ec5b0ba",
+    "tests/test_vectorstore_interface.py": "e7e39727d995118d505f99838b924bf66ad767ac8ed58fbbf29330f912cf88fb"
+  },
+  "publication_changes": [
+    "Public repository URLs in package metadata",
+    "Current GitHub installation instructions and explicit existing license",
+    "Public package acceptance workflow"
+  ]
+}
