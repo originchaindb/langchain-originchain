@@ -1,96 +1,142 @@
-# langchain-originchain
+# LangChain for OriginChainDB
 
-LangChain VectorStore adapter for [OriginChainDB](https://originchaindb.com).
+Store and retrieve LangChain documents using an OriginChainDB vector table and
+an optional table for document text and metadata.
 
-This is a **Proprietary** GitHub preview. The existing license declaration is
-preserved; this release does not add an open-source license grant.
+**Status:** `0.1.0rc1` preview. **License:** Proprietary; the existing license
+declaration is unchanged. No open-source license is granted by this release.
 
-Install the tested preview directly from its GitHub release assets. These
-packages have not been published to PyPI:
+## Install
+
+Requires Python 3.10+, LangChain Core 0.3 or 1.x, and the OriginChain Python SDK
+0.10.0rc1 or newer (below 1.0). The commands below install the tested core SDK and
+adapter from GitHub; the adapter is not published to PyPI.
 
 ```bash
 python -m pip install "https://github.com/originchaindb/originchain-python/releases/download/v0.10.0-rc.3/originchain-0.10.0rc3-py3-none-any.whl#sha256=1d6456e7bc51e0dfb4b0d03ef4e0713f2cd3c902e4579a7fb956e5fb6e59c647"
 python -m pip install https://github.com/originchaindb/langchain-originchain/releases/download/v0.1.0-rc.1/langchain_originchain-0.1.0rc1-py3-none-any.whl
 ```
 
+The example uses OpenAI embeddings. Install that provider separately:
+
+```bash
+python -m pip install langchain-openai
+```
+
+## Add, search and delete documents
+
+Set `OC_BASE_URL`, `OC_TENANT` and `OC_BEARER` to your database connection values,
+and `OPENAI_API_KEY` for the embedding provider. Load credentials through your
+environment or secrets manager.
+
+This example creates the content schema, stores two documents, searches with a
+metadata filter, and deletes the example documents. Embedding requests go to
+OpenAI. Use a separate table for each embedding model and dimension.
+
 ```python
-from langchain_originchain import OriginChainVectorStore
 from langchain_openai import OpenAIEmbeddings
+from langchain_originchain import OriginChainVectorStore
 from originchain import OriginChain
 
-# OpenAIEmbeddings is an optional, separately installed provider integration.
 with OriginChain.from_env() as db:
+    db.schemas.register("""
+namespace = "sdk_examples"
+table = "langchain_documents"
+primary_key = ["id"]
+[[columns]]
+name = "id"
+ty = "str"
+required = true
+[[columns]]
+name = "text"
+ty = "str"
+[[columns]]
+name = "metadata"
+ty = "json"
+""")
+
     store = OriginChainVectorStore(
         client=db,
-        table="docs",
+        table="langchain_vectors",
+        text_schema="sdk_examples.langchain_documents",
         dim=1536,
-        embedding=OpenAIEmbeddings(),
-        text_schema="doc_rows",
+        embedding=OpenAIEmbeddings(
+            model="text-embedding-3-small", dimensions=1536
+        ),
     )
-    store.add_texts(["hello world"], ids=["greeting"], metadatas=[{"tag": "public"}])
-    documents = store.similarity_search("hello", k=2, filter={"tag": "public"})
-    store.delete(ids=["greeting"])
+    ids = store.add_texts(
+        ["Returns are accepted within 30 days.", "Express delivery takes two days."],
+        ids=["example-returns", "example-delivery"],
+        metadatas=[{"topic": "returns"}, {"topic": "delivery"}],
+    )
+    documents = store.similarity_search(
+        "When can I return an order?", k=2, filter={"topic": "returns"}
+    )
+    for document in documents:
+        print(document.id, document.page_content, document.metadata)
+
+    retriever = store.as_retriever(search_kwargs={"k": 2})
+    print(retriever.invoke("How long does delivery take?"))
+    store.delete(ids=ids)
 ```
 
-Supports LangChain Core 0.3 and 1.x. `add_documents`, retriever invocation,
-`from_texts`, text/vector search and relevance scores use the framework's normal
-VectorStore interface. The supplied embedding implementation owns model calls.
-Metadata filters are flat scalar equalities joined with AND; operator dictionaries
-are rejected. `delete` requires explicit IDs and also works without text storage.
-An empty ID list is a successful no-op. Relevance scores map cosine to `[0,1]`,
-dot products through an overflow-safe sigmoid, and L2 through `1/(1+distance)`.
+`table` names the vector table; `text_schema` names the separate content schema.
+Schema registration belongs in application setup. When reusing a schema, its
+columns and primary key must match the definition above. Tables and schema names
+must be ASCII identifiers, optionally qualified as `namespace.table`.
 
-## Correctness and compatibility
+## Supported operations
 
-Python 3.10 or newer and `originchain>=0.10.0rc1,<1` are required. The server must
-support positional SQL parameters and executed SQL DELETE (the deployed test
-database was checked on 24 October 2026). Identifiers accept ASCII names with an
-optional namespace; IDs and document references are sent as SQL parameters.
+| Operation | Behavior |
+| --- | --- |
+| `add_texts`, `add_documents` | Embed and store content. Supply stable IDs to retry an interrupted write. |
+| `from_texts` | Construct and populate a store; requires `client=`. Pass `dim=` to avoid an extra embedding call to infer it. |
+| `similarity_search` | Return hydrated LangChain `Document` objects. |
+| `similarity_search_by_vector` | Search using an existing vector of exactly `dim` finite numbers. |
+| `similarity_search_with_score` | Return documents with raw server scores. |
+| `as_retriever` | Use similarity search through LangChain's retriever interface. MMR is not implemented. |
+| `delete(ids=[...])` | Delete the named vectors and their content rows. An empty list is a no-op; omitting IDs raises `ValueError`. |
 
-Create the content table before ingesting, using SQL or the schema API:
+Filters are flat equality dictionaries: `{"topic": "returns", "published": True}`
+means both conditions must match. Values can be strings, finite numbers or
+booleans. Nested operators, lists and `None` are rejected.
 
-```sql
-CREATE TABLE doc_rows (
-  id TEXT PRIMARY KEY,
-  text TEXT,
-  metadata JSON,
-  ref_doc_id TEXT
-)
-```
+`metric` accepts `cosine` (default), `dot` or `l2`. LangChain relevance-score
+search maps these to `[0, 1]` using `(score + 1) / 2`, a sigmoid, or
+`1 / (1 + distance)` respectively. `mode` optionally selects `fast` or
+`high_recall` on the server.
 
-`ref_doc_id` is used by LlamaIndex. LangChain does not write it. Content storage
-is optional, but without it the application/framework must retain the documents
-in its own docstore. Vectors are stored in the separate configured vector table.
+## Storage, failures and client ownership
 
-Writes and deletions touch separate vector and row endpoints; they are not one
-transaction. Supply stable IDs and retry after failures. Errors propagate to the
-caller. A deletion removes the vector first, deletes the row by its primary key,
-and confirms the row is absent. An old server that only translates SQL cannot
-report a successful deletion while retaining the row. Concurrent writers of the
-same ID must be serialized by the application.
+The caller owns the synchronous `OriginChain` client. Keep it open while using
+the store or retriever; the context manager in the example closes it afterward.
 
-Search skips vector hits whose content rows no longer exist, so it can return
-fewer than `k` results. Authentication, schema, transport, and service errors
-raise; they never become fabricated empty documents. The caller owns and closes
-the OriginChain client.
+Without `text_schema`, the adapter stores only vectors. Search then returns
+ID-only documents with empty text; your application must resolve the content.
+With `text_schema`, a hit whose content row is missing is skipped, so a search
+can return fewer than `k` documents.
 
-## Verification
+Writes store a content row before its vector. Deletes remove a vector before its
+row, then read the row back to confirm absence. These requests are **not one
+transaction**: a failure can leave partial state. Errors propagate to the caller.
+Retry with the same IDs, and serialize concurrent writes and deletes for an ID.
+Repeated deletion of an absent ID is safe.
 
-```powershell
-python -m pip install -e ".[dev]" build twine
+The server must execute SQL DELETE and support positional SQL parameters.
+Authentication, transport and server errors come from the core SDK; malformed
+inputs raise `ValueError`. A server that acknowledges deletion but retains the
+row causes `RuntimeError` rather than a successful result.
+
+## Development
+
+After installing the core SDK above:
+
+```bash
+python -m pip install -e ".[dev]" build
 python -m pytest -q tests
 python -m ruff check src tests
 python -m build
-python -m twine check dist/*
 ```
 
-The regression tests use installed framework classes and the real OriginChain
-HTTP client with `httpx.MockTransport`. They verify the wire payloads, parameter
-binding, vector plus row deletion, partial failures, missing hits and unsupported
-filters. These tests are distinct from live database acceptance. Credentials are
-never part of the package. The existing Proprietary license is preserved.
-
-The public acceptance workflow tests Python 3.10, 3.12 and 3.14 on Linux
-and Python 3.12 on Windows, including the minimum framework version and a fresh
-wheel installation. Release assets include separate mock-test and live-database
-verification receipts. Live checks use a separate disposable namespace.
+Tests use real LangChain types and mocked HTTP. Separate live database results
+and package checksums are attached to the [GitHub release](https://github.com/originchaindb/langchain-originchain/releases/tag/v0.1.0-rc.1).
