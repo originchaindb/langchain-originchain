@@ -6,6 +6,17 @@ an optional table for document text and metadata.
 **Status:** `0.1.0rc1` preview. **License:** Proprietary; the existing license
 declaration is unchanged. No open-source license is granted by this release.
 
+## Repository structure
+
+| Path | Purpose |
+| --- | --- |
+| [`src/langchain_originchain/`](src/langchain_originchain/) | LangChain vector store and input validation. |
+| [`tests/`](tests/) | Real framework contracts using mocked database requests. |
+| [`examples/`](examples/) | Read-only vector search with supplied embeddings. |
+| [`.github/workflows/`](.github/workflows/) | Framework-version, platform and installed-wheel checks. |
+
+Start with the [runnable examples](examples/README.md). For setup, tests and package checks, see [Contributing](CONTRIBUTING.md).
+
 ## Install
 
 Requires Python 3.10+, LangChain Core 0.3 or 1.x, and the OriginChain Python SDK
